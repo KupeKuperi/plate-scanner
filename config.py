@@ -12,24 +12,36 @@ import os
 VIDEO_SOURCE = 0
 
 # ---------------------------------------------------------------------------
-# Frame processing
+# OCR performance  ← main CPU knobs
 # ---------------------------------------------------------------------------
-# Resize frames wider than this before OCR (pixels). Speeds up EasyOCR.
-MAX_FRAME_WIDTH = 1280
+# Maximum times per second EasyOCR is allowed to run.
+# 2 FPS is plenty for a car-wash entrance; lower = cooler CPU.
+OCR_TARGET_FPS = 2
 
-# Seconds to keep a detection box visible on screen after it was found.
-# OCR runs in a background thread, so the overlay persists between OCR cycles.
-OVERLAY_TTL = 3.0
+# Resize frames to this width before sending to EasyOCR.
+# Smaller = faster OCR, less CPU heat. 640 is a good default.
+MAX_FRAME_WIDTH = 640
 
-# Minimum EasyOCR confidence to accept a text detection (0.0 – 1.0)
+# Minimum EasyOCR confidence to accept a detection.
 MIN_CONFIDENCE = 0.40
+
+# ---------------------------------------------------------------------------
+# Motion detection gate
+# ---------------------------------------------------------------------------
+# When True, OCR only runs when the camera sees movement above the threshold.
+# This is the biggest CPU-saver: idle scene = zero OCR work.
+MOTION_DETECTION  = True
+MOTION_THRESHOLD  = 3000   # non-zero pixels in the diff frame
 
 # ---------------------------------------------------------------------------
 # Cooldown
 # ---------------------------------------------------------------------------
-# How long (seconds) to suppress re-counting the same plate after it is saved.
-# Default: 15 minutes = 900 seconds
-COOLDOWN_SECONDS = 15 * 60
+COOLDOWN_SECONDS = 15 * 60   # 15 minutes
+
+# ---------------------------------------------------------------------------
+# Overlay
+# ---------------------------------------------------------------------------
+OVERLAY_TTL = 3.0   # seconds to keep a bounding-box on screen after detection
 
 # ---------------------------------------------------------------------------
 # Storage
@@ -38,16 +50,7 @@ STORAGE_DIR  = "data"
 STORAGE_FILE = os.path.join(STORAGE_DIR, "plates.json")
 
 # ---------------------------------------------------------------------------
-# OCR
+# OCR language
 # ---------------------------------------------------------------------------
-# 'en' covers the Latin alphabet used on Georgian plates.
-# Add additional language codes here if needed.
 OCR_LANGUAGES = ["en"]
-
-# Whether to use GPU for EasyOCR. Set True only if you have CUDA installed.
-OCR_USE_GPU = False
-
-# ---------------------------------------------------------------------------
-# Display
-# ---------------------------------------------------------------------------
-WINDOW_TITLE = "ANPR System  |  press 'q' to quit"
+OCR_USE_GPU   = False   # set True only if CUDA is installed
