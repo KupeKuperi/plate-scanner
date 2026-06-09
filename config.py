@@ -14,12 +14,12 @@ VIDEO_SOURCE = 0
 # ---------------------------------------------------------------------------
 # Frame processing
 # ---------------------------------------------------------------------------
-# Process every Nth frame — balances CPU load vs. detection latency.
-# Lower = more responsive but heavier; higher = lighter but slower to react.
-FRAME_SKIP = 5
-
 # Resize frames wider than this before OCR (pixels). Speeds up EasyOCR.
 MAX_FRAME_WIDTH = 1280
+
+# Seconds to keep a detection box visible on screen after it was found.
+# OCR runs in a background thread, so the overlay persists between OCR cycles.
+OVERLAY_TTL = 3.0
 
 # Minimum EasyOCR confidence to accept a text detection (0.0 – 1.0)
 MIN_CONFIDENCE = 0.40

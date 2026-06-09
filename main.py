@@ -1,23 +1,24 @@
 """
 ANPR System — entry point.
 
-Flow:
-  1. Open webcam (or RTSP stream — see config.py).
-  2. Every FRAME_SKIP frames, run the plate detector.
-  3. For each detected plate:
-       - If outside the cooldown window → save to JSON, log [SAVED].
-       - If inside  the cooldown window → log [SKIP] with remaining time.
-  4. Draw bounding boxes and plate text on the live preview window.
-  5. On exit, print a summary of all recorded plates.
+Architecture (fixes camera lag):
+  - Main thread  : reads frames from the camera and displays them at full FPS.
+                   It never waits for OCR.
+  - OCR thread   : runs EasyOCR on whatever the latest available frame is.
+                   When it finishes, it immediately picks up the next frame.
+
+Detection overlays stay on screen for OVERLAY_TTL seconds so you can see
+results even between OCR cycles.
 """
 import logging
 import sys
+import threading
 import time
 
 import cv2
 import numpy as np
 
-from config import COOLDOWN_SECONDS, FRAME_SKIP, VIDEO_SOURCE, WINDOW_TITLE
+from config import COOLDOWN_SECONDS, OVERLAY_TTL, VIDEO_SOURCE, WINDOW_TITLE
 from detector import PlateDetector
 from storage import get_all, record_plate
 
@@ -50,13 +51,81 @@ def _draw_detection(frame: np.ndarray, plate: str, bbox: list, skipped: bool) ->
 
 
 # ---------------------------------------------------------------------------
+# OCR background thread
+# ---------------------------------------------------------------------------
+def _ocr_worker(
+    detector: PlateDetector,
+    pending_frame,       # list[ndarray | None]  — single-slot latest frame
+    pending_lock,
+    overlays,            # list of (plate, conf, bbox, skipped, expire_time)
+    overlays_lock,
+    cooldown_tracker,    # dict[str, float]
+    stop_event,
+) -> None:
+    while not stop_event.is_set():
+        # Grab the latest frame (if any)
+        with pending_lock:
+            frame = pending_frame[0]
+            pending_frame[0] = None
+
+        if frame is None:
+            time.sleep(0.01)
+            continue
+
+        detections = detector.detect(frame)
+        if not detections:
+            continue
+
+        now = time.time()
+        new_overlays = []
+
+        for plate, confidence, bbox in detections:
+            elapsed = now - cooldown_tracker.get(plate, 0.0)
+            skipped = elapsed < COOLDOWN_SECONDS
+
+            if skipped:
+                remaining_min = int((COOLDOWN_SECONDS - elapsed) / 60)
+                remaining_sec = int((COOLDOWN_SECONDS - elapsed) % 60)
+                logger.info(
+                    f"[SKIP]   {plate:<14}  conf={confidence:.2f}  "
+                    f"cooldown: {remaining_min:02d}:{remaining_sec:02d} remaining"
+                )
+            else:
+                count = record_plate(plate)
+                cooldown_tracker[plate] = now
+                logger.info(
+                    f"[SAVED]  {plate:<14}  conf={confidence:.2f}  "
+                    f"total scans: {count}"
+                )
+
+            new_overlays.append((plate, confidence, bbox, skipped, now + OVERLAY_TTL))
+
+        with overlays_lock:
+            overlays[:] = new_overlays
+
+
+# ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 def main() -> None:
     detector = PlateDetector()
 
-    # cooldown_tracker maps  plate_text → unix timestamp of last record
-    cooldown_tracker: dict[str, float] = {}
+    cooldown_tracker: dict = {}
+
+    # Shared state between main thread and OCR thread
+    pending_frame  = [None]
+    pending_lock   = threading.Lock()
+    overlays       = []
+    overlays_lock  = threading.Lock()
+    stop_event     = threading.Event()
+
+    ocr_thread = threading.Thread(
+        target=_ocr_worker,
+        args=(detector, pending_frame, pending_lock,
+              overlays, overlays_lock, cooldown_tracker, stop_event),
+        daemon=True,
+        name="OCR-thread",
+    )
 
     source_label = f"webcam (index {VIDEO_SOURCE})" if isinstance(VIDEO_SOURCE, int) else VIDEO_SOURCE
     logger.info(f"Opening video source: {source_label}")
@@ -69,9 +138,11 @@ def main() -> None:
         )
         sys.exit(1)
 
-    logger.info("Stream opened. ANPR running — press 'q' in the preview window to quit.\n")
+    # Reduce the camera's internal buffer to 1 frame — key fix for lag.
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
-    frame_index = 0
+    ocr_thread.start()
+    logger.info("Stream opened. ANPR running — press 'q' in the preview window to quit.\n")
 
     try:
         while True:
@@ -81,32 +152,18 @@ def main() -> None:
                 time.sleep(0.1)
                 continue
 
-            frame_index += 1
+            # Always feed the latest frame to the OCR thread (overwrites any unprocessed one)
+            with pending_lock:
+                pending_frame[0] = frame.copy()
 
-            if frame_index % FRAME_SKIP == 0:
-                detections = detector.detect(frame)
+            # Draw overlays that haven't expired yet
+            now = time.time()
+            with overlays_lock:
+                overlays[:] = [o for o in overlays if o[4] > now]
+                active = list(overlays)
 
-                for plate, confidence, bbox in detections:
-                    now     = time.time()
-                    elapsed = now - cooldown_tracker.get(plate, 0.0)
-                    skipped = elapsed < COOLDOWN_SECONDS
-
-                    if skipped:
-                        remaining_min = int((COOLDOWN_SECONDS - elapsed) / 60)
-                        remaining_sec = int((COOLDOWN_SECONDS - elapsed) % 60)
-                        logger.info(
-                            f"[SKIP]   {plate:<14}  conf={confidence:.2f}  "
-                            f"cooldown: {remaining_min:02d}:{remaining_sec:02d} remaining"
-                        )
-                    else:
-                        count = record_plate(plate)
-                        cooldown_tracker[plate] = now
-                        logger.info(
-                            f"[SAVED]  {plate:<14}  conf={confidence:.2f}  "
-                            f"total scans: {count}"
-                        )
-
-                    _draw_detection(frame, plate, bbox, skipped)
+            for plate, conf, bbox, skipped, _ in active:
+                _draw_detection(frame, plate, bbox, skipped)
 
             cv2.imshow(WINDOW_TITLE, frame)
 
@@ -118,6 +175,7 @@ def main() -> None:
         logger.info("Interrupted (Ctrl+C).")
 
     finally:
+        stop_event.set()
         cap.release()
         cv2.destroyAllWindows()
         _print_summary()
