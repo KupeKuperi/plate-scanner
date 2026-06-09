@@ -29,7 +29,8 @@ import numpy as np
 from PIL import Image
 
 from config import (
-    COOLDOWN_SECONDS, MOTION_DETECTION, MOTION_THRESHOLD,
+    CAMERA_HEIGHT, CAMERA_WIDTH, COOLDOWN_SECONDS,
+    MOTION_DETECTION, MOTION_THRESHOLD,
     OCR_TARGET_FPS, OVERLAY_TTL, VIDEO_SOURCE,
 )
 from detector import PlateDetector
@@ -208,6 +209,11 @@ class ANPRApp(ctk.CTk):
             logger.error("Could not open video source.")
             return
         self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH,  CAMERA_WIDTH)
+        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
+        actual_w = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_h = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        logger.info(f"Camera resolution: {actual_w}×{actual_h}")
         self._status_lbl.configure(text="● Connected  /  Scanning", text_color=_GREEN)
         logger.info("Camera opened.")
 

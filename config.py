@@ -12,15 +12,23 @@ import os
 VIDEO_SOURCE = 0
 
 # ---------------------------------------------------------------------------
-# OCR performance  ← main CPU knobs
+# Camera capture resolution
+# ---------------------------------------------------------------------------
+# The webcam will be asked to capture at this resolution.
+# 1280x720 is standard HD. Change to 1920x1080 for full HD if your camera supports it.
+CAMERA_WIDTH  = 1280
+CAMERA_HEIGHT = 720
+
+# ---------------------------------------------------------------------------
+# OCR performance
 # ---------------------------------------------------------------------------
 # Maximum times per second EasyOCR is allowed to run.
-# 2 FPS is plenty for a car-wash entrance; lower = cooler CPU.
+# With GPU this can stay at 2 — the GPU finishes each frame quickly.
 OCR_TARGET_FPS = 2
 
 # Resize frames to this width before sending to EasyOCR.
-# Smaller = faster OCR, less CPU heat. 640 is a good default.
-MAX_FRAME_WIDTH = 640
+# 1280 is fine on GPU; drop to 640 if you switch back to CPU.
+MAX_FRAME_WIDTH = 1280
 
 # Minimum EasyOCR confidence to accept a detection.
 MIN_CONFIDENCE = 0.40
@@ -53,4 +61,4 @@ STORAGE_FILE = os.path.join(STORAGE_DIR, "plates.json")
 # OCR language
 # ---------------------------------------------------------------------------
 OCR_LANGUAGES = ["en"]
-OCR_USE_GPU   = False   # set True only if CUDA is installed
+OCR_USE_GPU   = True    # RTX 4070 detected — GPU enabled
